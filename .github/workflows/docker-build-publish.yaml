@@ -1,361 +1,444 @@
-name: Build and Publish Docker Images
-
-on:
-  push:
-    tags:
-      - '*'
-
 env:
   DOCKER_BUILDX_PLATFORM: linux/amd64,linux/arm64
   DOCKER_REGISTRY_OWNER: athenz
   GOLANG_VERSION: ^1.19
-  NODEJS_VERSION: ^18
-  JAVA_VERSION: ^11
-  JAVA_DISTRO: temurin
   JAVA_ARCH: x64
-
+  JAVA_DISTRO: temurin
+  JAVA_VERSION: ^11
+  NODEJS_VERSION: ^18
 jobs:
   build:
-    runs-on: ubuntu-latest
     permissions:
       actions: none
       checks: none
       contents: read
       deployments: none
-      issues: none
       discussions: none
+      issues: none
       packages: none
       pull-requests: none
       repository-projects: none
       security-events: none
       statuses: none
-
+    runs-on: self-hosted
     steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: kfir4444/free-disk-space@main
-        with:
-          # this might remove tools that are actually needed,
-          # if set to "true" but frees about 6 GB
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: false
-          swap-storage: true
+    - continue-on-error: true
+      name: Free Disk Space (Ubuntu)
+      uses: kfir4444/free-disk-space@main
+      with:
+        android: true
+        docker-images: false
+        dotnet: true
+        haskell: true
+        large-packages: true
+        swap-storage: true
+        tool-cache: false
+    - continue-on-error: true
+      id: env
+      name: GitHub Environment Variables Action
+      uses: FranzDiebold/github-env-vars-action@v2
+    - continue-on-error: true
+      id: checkout
+      name: Checkout repository
+      uses: actions/checkout@v3
+    - continue-on-error: true
+      id: get_tag
+      name: Get Tag Name
+      run: 'RELEASE_TAG=${{ env.CI_REF_NAME }}
 
-      - name: GitHub Environment Variables Action
-        id: env
-        uses: FranzDiebold/github-env-vars-action@v2
+        echo "ATHENZ_TAG=${RELEASE_TAG#v}" >> $GITHUB_ENV
 
-      - name: Checkout repository
-        id: checkout
-        uses: actions/checkout@v3
+        '
+    - continue-on-error: true
+      id: default_env
+      name: Set Default Environment Variables
+      run: '[[ "${{ env.DOCKER_REGISTRY_URL}}" = "" ]] && echo "DOCKER_REGISTRY_URL=docker.io"
+        >> $GITHUB_ENV
 
-      - name: Get Tag Name
-        id: get_tag
-        run: |
-          RELEASE_TAG=${{ env.CI_REF_NAME }}
-          echo "ATHENZ_TAG=${RELEASE_TAG#v}" >> $GITHUB_ENV
+        [[ "${{ env.DOCKER_REGISTRY_USER }}" = "" ]] && echo "DOCKER_REGISTRY_USER=abvaidya"
+        >> $GITHUB_ENV
 
-      - name: Set Default Environment Variables
-        id: default_env
-        run: |
-          [[ "${{ env.DOCKER_REGISTRY_URL}}" = "" ]] && echo "DOCKER_REGISTRY_URL=docker.io" >> $GITHUB_ENV
-          [[ "${{ env.DOCKER_REGISTRY_USER }}" = "" ]] && echo "DOCKER_REGISTRY_USER=abvaidya" >> $GITHUB_ENV
-          [[ "${{ env.DOCKER_REGISTRY_OWNER }}" = "" ]] && echo "DOCKER_REGISTRY_OWNER=athenz" >> $GITHUB_ENV
-          [[ "${{ env.DOCKER_REGISTRY_IMAGE }}" = "" ]] && echo "DOCKER_REGISTRY_IMAGE=${{ env.CI_REPOSITORY_NAME }}" >> $GITHUB_ENV
-          [[ "${{ env.DOCKER_REGISTRY_TOKEN}}" = "" ]] && echo "DOCKER_REGISTRY_TOKEN=${{ secrets.DOCKER_REGISTRY_TOKEN }}" >> $GITHUB_ENV
-          [[ "${{ env.DELETE_UNTAGGED_IMAGES_TOKEN }}" = "" ]] && echo "DELETE_UNTAGGED_IMAGES_TOKEN=${{ env.DOCKER_REGISTRY_TOKEN }}" >> $GITHUB_ENV
-          [[ "${{ env.DELETE_UNTAGGED_IMAGES_PER_PAGE }}" = "" ]] && echo "DELETE_UNTAGGED_IMAGES_PER_PAGE=100" >> $GITHUB_ENV
-          echo "BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
-          echo "SCM_REF=${{ github.sha }}" >> $GITHUB_ENV
-          echo "BASE_DIR=$(pwd)" >> $GITHUB_ENV
-          echo "LOCAL_ENV_NS=$(sh $(pwd)/docker/local-nameserver.sh)" >> $GITHUB_ENV
-          [[ "${{ env.DOCKER_DNS}}" = "" ]] && echo "DOCKER_DNS=8.8.8.8" >> $GITHUB_ENV
-          [[ "${{ env.DOCKER_NETWORK}}" = "" ]] && echo "DOCKER_NETWORK=athenz" >> $GITHUB_ENV
-          echo "GID=1001" >> $GITHUB_ENV
-          echo "UID=10001" >> $GITHUB_ENV
+        [[ "${{ env.DOCKER_REGISTRY_OWNER }}" = "" ]] && echo "DOCKER_REGISTRY_OWNER=athenz"
+        >> $GITHUB_ENV
 
-      - name: Setup Golang
-        id: setup-go
-        uses: actions/setup-go@v4
-        with:
-          go-version: ${{ env.GOLANG_VERSION }}
+        [[ "${{ env.DOCKER_REGISTRY_IMAGE }}" = "" ]] && echo "DOCKER_REGISTRY_IMAGE=${{
+        env.CI_REPOSITORY_NAME }}" >> $GITHUB_ENV
 
-      - name: Setup Node
-        id: setup-node
-        uses: actions/setup-node@v3
-        with:
-          node-version: ${{ env.NODEJS_VERSION }}
+        [[ "${{ env.DOCKER_REGISTRY_TOKEN}}" = "" ]] && echo "DOCKER_REGISTRY_TOKEN=${{
+        secrets.DOCKER_REGISTRY_TOKEN }}" >> $GITHUB_ENV
 
-      - name: Setup Java
-        id: setup-java
-        uses: actions/setup-java@v3
-        with:
-          java-version: ${{ env.JAVA_VERSION }}
-          distribution: ${{ env.JAVA_DISTRO }}
-          architecture: ${{ env.JAVA_ARCH }}
-          cache: 'maven'
+        [[ "${{ env.DELETE_UNTAGGED_IMAGES_TOKEN }}" = "" ]] && echo "DELETE_UNTAGGED_IMAGES_TOKEN=${{
+        env.DOCKER_REGISTRY_TOKEN }}" >> $GITHUB_ENV
 
-      # - name: Build with Maven
-      #   id: build-maven
-      #   run: mvn --batch-mode --update-snapshots package -DskipTests=true
+        [[ "${{ env.DELETE_UNTAGGED_IMAGES_PER_PAGE }}" = "" ]] && echo "DELETE_UNTAGGED_IMAGES_PER_PAGE=100"
+        >> $GITHUB_ENV
 
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@v4
-        with:
-          images: ${{ env.DOCKER_REGISTRY_URL }}/${{ env.DOCKER_REGISTRY_OWNER }}/${{ env.DOCKER_REGISTRY_IMAGE }}
-          flavor: |
-            latest=true
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern=v{{version}}
-            type=raw,value=${{ env.ATHENZ_TAG }},enable=${{ github.ref == format('refs/tags/{0}', env.ATHENZ_TAG) }}
-            type=raw,value=latest
+        echo "BUILD_DATE=$(date -u +''%Y-%m-%dT%H:%M:%SZ'')" >> $GITHUB_ENV
 
-      - name: Docker Login to registry ${{ env.DOCKER_REGISTRY_URL }}
-        id: login
-        uses: docker/login-action@v2
-        with:
-          registry: ${{ env.DOCKER_REGISTRY_URL }}
-          username: ${{ env.DOCKER_REGISTRY_USER }}
-          password: ${{ env.DOCKER_REGISTRY_TOKEN }}
-          logout: true
+        echo "SCM_REF=${{ github.sha }}" >> $GITHUB_ENV
 
-      - name: Set up QEMU
-        id: qemu
-        uses: docker/setup-qemu-action@v2
+        echo "BASE_DIR=$(pwd)" >> $GITHUB_ENV
 
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v2
+        echo "LOCAL_ENV_NS=$(sh $(pwd)/docker/local-nameserver.sh)" >> $GITHUB_ENV
 
-      - name: Build rdl-athenz-server Docker image
-        id: build_rdl_athenz_server_docker
-        uses: docker/build-push-action@v4
-        with:
-          context: './rdl/rdl-gen-athenz-server'
-          file: './docker/util/rdl-athenz-server/Dockerfile'
-          push: ${{ github.event_name != 'pull_request' }}
-          load: ${{ github.event_name == 'pull_request' }}
-          tags: |
-            ${{ env.DOCKER_REGISTRY_OWNER }}/rdl-athenz-server:latest
-            ${{ env.DOCKER_REGISTRY_OWNER }}/rdl-athenz-server:${{ env.ATHENZ_TAG }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
-          build-args: |
-            BUILD_DATE=${{ env.BUILD_DATE }}
-            VCS_REF=${{ env.SCM_REF }}
+        [[ "${{ env.DOCKER_DNS}}" = "" ]] && echo "DOCKER_DNS=8.8.8.8" >> $GITHUB_ENV
 
-      - name: Build rdl-athenz-java-model Docker image
-        id: build_rdl_athenz_java_model_docker
-        uses: docker/build-push-action@v4
-        with:
-          context: './rdl/rdl-gen-athenz-java-model'
-          file: './docker/util/rdl-athenz-java-model/Dockerfile'
-          push: ${{ github.event_name != 'pull_request' }}
-          load: ${{ github.event_name == 'pull_request' }}
-          tags: |
-            ${{ env.DOCKER_REGISTRY_OWNER }}/rdl-athenz-java-model:latest
-            ${{ env.DOCKER_REGISTRY_OWNER }}/rdl-athenz-java-model:${{ env.ATHENZ_TAG }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
-          build-args: |
-            BUILD_DATE=${{ env.BUILD_DATE }}
-            VCS_REF=${{ env.SCM_REF }}
+        [[ "${{ env.DOCKER_NETWORK}}" = "" ]] && echo "DOCKER_NETWORK=athenz" >> $GITHUB_ENV
 
-      - name: Build rdl-athenz-java-client Docker image
-        id: build_rdl_athenz_java_client_docker
-        uses: docker/build-push-action@v4
-        with:
-          context: './rdl/rdl-gen-athenz-java-client'
-          file: './docker/util/rdl-athenz-java-client/Dockerfile'
-          push: ${{ github.event_name != 'pull_request' }}
-          load: ${{ github.event_name == 'pull_request' }}
-          tags: |
-            ${{ env.DOCKER_REGISTRY_OWNER }}/rdl-athenz-java-client:latest
-            ${{ env.DOCKER_REGISTRY_OWNER }}/rdl-athenz-java-client:${{ env.ATHENZ_TAG }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
-          build-args: |
-            BUILD_DATE=${{ env.BUILD_DATE }}
-            VCS_REF=${{ env.SCM_REF }}
+        echo "GID=1001" >> $GITHUB_ENV
 
-      - name: Build rdl-athenz-go-model Docker image
-        id: build_rdl_athenz_go_model_docker
-        uses: docker/build-push-action@v4
-        with:
-          context: './rdl/rdl-gen-athenz-go-model'
-          file: './docker/util/rdl-athenz-go-model/Dockerfile'
-          push: ${{ github.event_name != 'pull_request' }}
-          load: ${{ github.event_name == 'pull_request' }}
-          tags: |
-            ${{ env.DOCKER_REGISTRY_OWNER }}/rdl-athenz-go-model:latest
-            ${{ env.DOCKER_REGISTRY_OWNER }}/rdl-athenz-go-model:${{ env.ATHENZ_TAG }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
-          build-args: |
-            BUILD_DATE=${{ env.BUILD_DATE }}
-            VCS_REF=${{ env.SCM_REF }}
+        echo "UID=10001" >> $GITHUB_ENV
 
-      - name: Build athenz-mvn-base Docker image
-        id: build_athenz_mvn_base_docker
-        uses: docker/build-push-action@v4
-        with:
-          context: './'
-          file: './docker/util/athenz-mvn-base/Dockerfile'
-          push: ${{ github.event_name != 'pull_request' }}
-          load: ${{ github.event_name == 'pull_request' }}
-          tags: |
-            ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-mvn-base:latest
-            ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-mvn-base:${{ env.ATHENZ_TAG }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
-          build-args: |
-            BUILD_DATE=${{ env.BUILD_DATE }}
-            VCS_REF=${{ env.SCM_REF }}
+        '
+    - continue-on-error: true
+      id: setup-go
+      name: Setup Golang
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GOLANG_VERSION }}
+    - continue-on-error: true
+      id: setup-node
+      name: Setup Node
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ env.NODEJS_VERSION }}
+    - continue-on-error: true
+      id: setup-java
+      name: Setup Java
+      uses: actions/setup-java@v3
+      with:
+        architecture: ${{ env.JAVA_ARCH }}
+        cache: maven
+        distribution: ${{ env.JAVA_DISTRO }}
+        java-version: ${{ env.JAVA_VERSION }}
+    - continue-on-error: true
+      id: meta
+      name: Extract Docker metadata
+      uses: docker/metadata-action@v4
+      with:
+        flavor: 'latest=true
 
-      - name: Build athenz-builder Docker image
-        id: build_athenz_builder_docker
-        uses: docker/build-push-action@v4
-        with:
-          context: './'
-          file: './docker/util/athenz-builder/Dockerfile'
-          push: ${{ github.event_name != 'pull_request' }}
-          load: ${{ github.event_name == 'pull_request' }}
-          tags: |
-            ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-builder:latest
-            ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-builder:${{ env.ATHENZ_TAG }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
-          build-args: |
-            BUILD_DATE=${{ env.BUILD_DATE }}
-            VCS_REF=${{ env.SCM_REF }}
+          '
+        images: ${{ env.DOCKER_REGISTRY_URL }}/${{ env.DOCKER_REGISTRY_OWNER }}/${{
+          env.DOCKER_REGISTRY_IMAGE }}
+        tags: 'type=ref,event=branch
 
-      - name: Build athenz-zms Docker image
-        id: build_athenz_zms_docker
-        uses: docker/build-push-action@v4
-        with:
-          context: './'
-          file: './docker/zms/Dockerfile'
-          push: ${{ github.event_name != 'pull_request' }}
-          load: ${{ github.event_name == 'pull_request' }}
-          tags: |
-            ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-zms-server:latest
-            ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-zms-server:${{ env.ATHENZ_TAG }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
-          build-args: |
-            BUILD_DATE=${{ env.BUILD_DATE }}
-            VCS_REF=${{ env.SCM_REF }}
-            GID=${{ env.GID }}
-            UID=${{ env.UID }}
+          type=ref,event=pr
 
-      - name: Build athenz-zts Docker image
-        id: build_athenz_zts_docker
-        uses: docker/build-push-action@v4
-        with:
-          context: './'
-          file: './docker/zts/Dockerfile'
-          push: ${{ github.event_name != 'pull_request' }}
-          load: ${{ github.event_name == 'pull_request' }}
-          tags: |
-            ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-zts-server:latest
-            ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-zts-server:${{ env.ATHENZ_TAG }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
-          build-args: |
-            BUILD_DATE=${{ env.BUILD_DATE }}
-            VCS_REF=${{ env.SCM_REF }}
-            GID=${{ env.GID }}
-            UID=${{ env.UID }}
+          type=semver,pattern=v{{version}}
 
-      - name: Build athenz-zms-db Docker image
-        id: build_athenz_zms_db_docker
-        uses: docker/build-push-action@v4
-        with:
-          context: './servers/zms/schema'
-          file: './docker/db/zms/Dockerfile'
-          push: ${{ github.event_name != 'pull_request' }}
-          load: ${{ github.event_name == 'pull_request' }}
-          tags: |
-            ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-zms-db:latest
-            ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-zms-db:${{ env.ATHENZ_TAG }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
-          build-args: |
-            BUILD_DATE=${{ env.BUILD_DATE }}
-            VCS_REF=${{ env.SCM_REF }}
+          type=raw,value=${{ env.ATHENZ_TAG }},enable=${{ github.ref == format(''refs/tags/{0}'',
+          env.ATHENZ_TAG) }}
 
-      - name: Build athenz-zts-db Docker image
-        id: build_athenz_zts_db_docker
-        uses: docker/build-push-action@v4
-        with:
-          context: './servers/zts/schema'
-          file: './docker/db/zts/Dockerfile'
-          push: ${{ github.event_name != 'pull_request' }}
-          load: ${{ github.event_name == 'pull_request' }}
-          tags: |
-            ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-zts-db:latest
-            ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-zts-db:${{ env.ATHENZ_TAG }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
-          build-args: |
-            BUILD_DATE=${{ env.BUILD_DATE }}
-            VCS_REF=${{ env.SCM_REF }}
+          type=raw,value=latest
 
-      - name: Build athenz-cli-util Docker image
-        id: build_athenz_cli_util_docker
-        uses: docker/build-push-action@v4
-        with:
-          context: './'
-          file: './docker/util/Dockerfile'
-          push: ${{ github.event_name != 'pull_request' }}
-          load: ${{ github.event_name == 'pull_request' }}
-          tags: |
-            ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-cli-util:latest
-            ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-cli-util:${{ env.ATHENZ_TAG }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
-          build-args: |
-            BUILD_DATE=${{ env.BUILD_DATE }}
-            VCS_REF=${{ env.SCM_REF }}
+          '
+    - continue-on-error: true
+      id: login
+      name: Docker Login to registry ${{ env.DOCKER_REGISTRY_URL }}
+      uses: docker/login-action@v2
+      with:
+        logout: true
+        password: ${{ env.DOCKER_REGISTRY_TOKEN }}
+        registry: ${{ env.DOCKER_REGISTRY_URL }}
+        username: ${{ env.DOCKER_REGISTRY_USER }}
+    - continue-on-error: true
+      id: qemu
+      name: Set up QEMU
+      uses: docker/setup-qemu-action@v2
+    - continue-on-error: true
+      id: buildx
+      name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+    - continue-on-error: true
+      id: build_rdl_athenz_server_docker
+      name: Build rdl-athenz-server Docker image
+      uses: docker/build-push-action@v4
+      with:
+        build-args: 'BUILD_DATE=${{ env.BUILD_DATE }}
 
-      - name: Build athenz-setup-env Docker image
-        id: build_athenz_setup_env_docker
-        uses: docker/build-push-action@v4
-        with:
-          context: './'
-          file: './docker/setup-scripts/Dockerfile'
-          push: ${{ github.event_name != 'pull_request' }}
-          load: ${{ github.event_name == 'pull_request' }}
-          tags: |
-            ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-setup-env:latest
-            ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-setup-env:${{ env.ATHENZ_TAG }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
-          build-args: |
-            BUILD_DATE=${{ env.BUILD_DATE }}
-            VCS_REF=${{ env.SCM_REF }}
+          VCS_REF=${{ env.SCM_REF }}
 
-      - name: Build athenz-ui Docker image
-        id: build_athenz_ui_docker
-        uses: docker/build-push-action@v4
-        with:
-          context: './ui'
-          file: './docker/ui/Dockerfile'
-          push: ${{ github.event_name != 'pull_request' }}
-          load: ${{ github.event_name == 'pull_request' }}
-          tags: |
-            ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-ui:latest
-            ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-ui:${{ env.ATHENZ_TAG }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
-          build-args: |
-            BUILD_DATE=${{ env.BUILD_DATE }}
-            VCS_REF=${{ env.SCM_REF }}
-            GID=${{ env.GID }}
-            UID=${{ env.UID }}
+          '
+        context: ./rdl/rdl-gen-athenz-server
+        file: ./docker/util/rdl-athenz-server/Dockerfile
+        labels: ${{ steps.meta.outputs.labels }}
+        load: ${{ github.event_name == 'pull_request' }}
+        platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
+        push: false
+        tags: '${{ env.DOCKER_REGISTRY_OWNER }}/rdl-athenz-server:latest
+
+          ${{ env.DOCKER_REGISTRY_OWNER }}/rdl-athenz-server:${{ env.ATHENZ_TAG }}
+
+          '
+    - continue-on-error: true
+      id: build_rdl_athenz_java_model_docker
+      name: Build rdl-athenz-java-model Docker image
+      uses: docker/build-push-action@v4
+      with:
+        build-args: 'BUILD_DATE=${{ env.BUILD_DATE }}
+
+          VCS_REF=${{ env.SCM_REF }}
+
+          '
+        context: ./rdl/rdl-gen-athenz-java-model
+        file: ./docker/util/rdl-athenz-java-model/Dockerfile
+        labels: ${{ steps.meta.outputs.labels }}
+        load: ${{ github.event_name == 'pull_request' }}
+        platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
+        push: false
+        tags: '${{ env.DOCKER_REGISTRY_OWNER }}/rdl-athenz-java-model:latest
+
+          ${{ env.DOCKER_REGISTRY_OWNER }}/rdl-athenz-java-model:${{ env.ATHENZ_TAG
+          }}
+
+          '
+    - continue-on-error: true
+      id: build_rdl_athenz_java_client_docker
+      name: Build rdl-athenz-java-client Docker image
+      uses: docker/build-push-action@v4
+      with:
+        build-args: 'BUILD_DATE=${{ env.BUILD_DATE }}
+
+          VCS_REF=${{ env.SCM_REF }}
+
+          '
+        context: ./rdl/rdl-gen-athenz-java-client
+        file: ./docker/util/rdl-athenz-java-client/Dockerfile
+        labels: ${{ steps.meta.outputs.labels }}
+        load: ${{ github.event_name == 'pull_request' }}
+        platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
+        push: false
+        tags: '${{ env.DOCKER_REGISTRY_OWNER }}/rdl-athenz-java-client:latest
+
+          ${{ env.DOCKER_REGISTRY_OWNER }}/rdl-athenz-java-client:${{ env.ATHENZ_TAG
+          }}
+
+          '
+    - continue-on-error: true
+      id: build_rdl_athenz_go_model_docker
+      name: Build rdl-athenz-go-model Docker image
+      uses: docker/build-push-action@v4
+      with:
+        build-args: 'BUILD_DATE=${{ env.BUILD_DATE }}
+
+          VCS_REF=${{ env.SCM_REF }}
+
+          '
+        context: ./rdl/rdl-gen-athenz-go-model
+        file: ./docker/util/rdl-athenz-go-model/Dockerfile
+        labels: ${{ steps.meta.outputs.labels }}
+        load: ${{ github.event_name == 'pull_request' }}
+        platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
+        push: false
+        tags: '${{ env.DOCKER_REGISTRY_OWNER }}/rdl-athenz-go-model:latest
+
+          ${{ env.DOCKER_REGISTRY_OWNER }}/rdl-athenz-go-model:${{ env.ATHENZ_TAG
+          }}
+
+          '
+    - continue-on-error: true
+      id: build_athenz_mvn_base_docker
+      name: Build athenz-mvn-base Docker image
+      uses: docker/build-push-action@v4
+      with:
+        build-args: 'BUILD_DATE=${{ env.BUILD_DATE }}
+
+          VCS_REF=${{ env.SCM_REF }}
+
+          '
+        context: ./
+        file: ./docker/util/athenz-mvn-base/Dockerfile
+        labels: ${{ steps.meta.outputs.labels }}
+        load: ${{ github.event_name == 'pull_request' }}
+        platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
+        push: false
+        tags: '${{ env.DOCKER_REGISTRY_OWNER }}/athenz-mvn-base:latest
+
+          ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-mvn-base:${{ env.ATHENZ_TAG }}
+
+          '
+    - continue-on-error: true
+      id: build_athenz_builder_docker
+      name: Build athenz-builder Docker image
+      uses: docker/build-push-action@v4
+      with:
+        build-args: 'BUILD_DATE=${{ env.BUILD_DATE }}
+
+          VCS_REF=${{ env.SCM_REF }}
+
+          '
+        context: ./
+        file: ./docker/util/athenz-builder/Dockerfile
+        labels: ${{ steps.meta.outputs.labels }}
+        load: ${{ github.event_name == 'pull_request' }}
+        platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
+        push: false
+        tags: '${{ env.DOCKER_REGISTRY_OWNER }}/athenz-builder:latest
+
+          ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-builder:${{ env.ATHENZ_TAG }}
+
+          '
+    - continue-on-error: true
+      id: build_athenz_zms_docker
+      name: Build athenz-zms Docker image
+      uses: docker/build-push-action@v4
+      with:
+        build-args: 'BUILD_DATE=${{ env.BUILD_DATE }}
+
+          VCS_REF=${{ env.SCM_REF }}
+
+          GID=${{ env.GID }}
+
+          UID=${{ env.UID }}
+
+          '
+        context: ./
+        file: ./docker/zms/Dockerfile
+        labels: ${{ steps.meta.outputs.labels }}
+        load: ${{ github.event_name == 'pull_request' }}
+        platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
+        push: false
+        tags: '${{ env.DOCKER_REGISTRY_OWNER }}/athenz-zms-server:latest
+
+          ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-zms-server:${{ env.ATHENZ_TAG }}
+
+          '
+    - continue-on-error: true
+      id: build_athenz_zts_docker
+      name: Build athenz-zts Docker image
+      uses: docker/build-push-action@v4
+      with:
+        build-args: 'BUILD_DATE=${{ env.BUILD_DATE }}
+
+          VCS_REF=${{ env.SCM_REF }}
+
+          GID=${{ env.GID }}
+
+          UID=${{ env.UID }}
+
+          '
+        context: ./
+        file: ./docker/zts/Dockerfile
+        labels: ${{ steps.meta.outputs.labels }}
+        load: ${{ github.event_name == 'pull_request' }}
+        platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
+        push: false
+        tags: '${{ env.DOCKER_REGISTRY_OWNER }}/athenz-zts-server:latest
+
+          ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-zts-server:${{ env.ATHENZ_TAG }}
+
+          '
+    - continue-on-error: true
+      id: build_athenz_zms_db_docker
+      name: Build athenz-zms-db Docker image
+      uses: docker/build-push-action@v4
+      with:
+        build-args: 'BUILD_DATE=${{ env.BUILD_DATE }}
+
+          VCS_REF=${{ env.SCM_REF }}
+
+          '
+        context: ./servers/zms/schema
+        file: ./docker/db/zms/Dockerfile
+        labels: ${{ steps.meta.outputs.labels }}
+        load: ${{ github.event_name == 'pull_request' }}
+        platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
+        push: false
+        tags: '${{ env.DOCKER_REGISTRY_OWNER }}/athenz-zms-db:latest
+
+          ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-zms-db:${{ env.ATHENZ_TAG }}
+
+          '
+    - continue-on-error: true
+      id: build_athenz_zts_db_docker
+      name: Build athenz-zts-db Docker image
+      uses: docker/build-push-action@v4
+      with:
+        build-args: 'BUILD_DATE=${{ env.BUILD_DATE }}
+
+          VCS_REF=${{ env.SCM_REF }}
+
+          '
+        context: ./servers/zts/schema
+        file: ./docker/db/zts/Dockerfile
+        labels: ${{ steps.meta.outputs.labels }}
+        load: ${{ github.event_name == 'pull_request' }}
+        platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
+        push: false
+        tags: '${{ env.DOCKER_REGISTRY_OWNER }}/athenz-zts-db:latest
+
+          ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-zts-db:${{ env.ATHENZ_TAG }}
+
+          '
+    - continue-on-error: true
+      id: build_athenz_cli_util_docker
+      name: Build athenz-cli-util Docker image
+      uses: docker/build-push-action@v4
+      with:
+        build-args: 'BUILD_DATE=${{ env.BUILD_DATE }}
+
+          VCS_REF=${{ env.SCM_REF }}
+
+          '
+        context: ./
+        file: ./docker/util/Dockerfile
+        labels: ${{ steps.meta.outputs.labels }}
+        load: ${{ github.event_name == 'pull_request' }}
+        platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
+        push: false
+        tags: '${{ env.DOCKER_REGISTRY_OWNER }}/athenz-cli-util:latest
+
+          ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-cli-util:${{ env.ATHENZ_TAG }}
+
+          '
+    - continue-on-error: true
+      id: build_athenz_setup_env_docker
+      name: Build athenz-setup-env Docker image
+      uses: docker/build-push-action@v4
+      with:
+        build-args: 'BUILD_DATE=${{ env.BUILD_DATE }}
+
+          VCS_REF=${{ env.SCM_REF }}
+
+          '
+        context: ./
+        file: ./docker/setup-scripts/Dockerfile
+        labels: ${{ steps.meta.outputs.labels }}
+        load: ${{ github.event_name == 'pull_request' }}
+        platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
+        push: false
+        tags: '${{ env.DOCKER_REGISTRY_OWNER }}/athenz-setup-env:latest
+
+          ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-setup-env:${{ env.ATHENZ_TAG }}
+
+          '
+    - continue-on-error: true
+      id: build_athenz_ui_docker
+      name: Build athenz-ui Docker image
+      uses: docker/build-push-action@v4
+      with:
+        build-args: 'BUILD_DATE=${{ env.BUILD_DATE }}
+
+          VCS_REF=${{ env.SCM_REF }}
+
+          GID=${{ env.GID }}
+
+          UID=${{ env.UID }}
+
+          '
+        context: ./ui
+        file: ./docker/ui/Dockerfile
+        labels: ${{ steps.meta.outputs.labels }}
+        load: ${{ github.event_name == 'pull_request' }}
+        platforms: ${{ env.DOCKER_BUILDX_PLATFORM }}
+        push: false
+        tags: '${{ env.DOCKER_REGISTRY_OWNER }}/athenz-ui:latest
+
+          ${{ env.DOCKER_REGISTRY_OWNER }}/athenz-ui:${{ env.ATHENZ_TAG }}
+
+          '
+name: Build and Publish Docker Images
+on:
+  repository_dispatch:
+    types: trigger-ga___docker-build-publish.yaml
